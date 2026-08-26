@@ -53,7 +53,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Main Title Headers
-st.markdown("<h1 class='main-title'>🌖 C.H.R.O.N.O.S</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-title'>🌖 C.H.R.O.N.O.S.</h1>", unsafe_allow_html=True)
 st.markdown("<p class='sub-title'><b>Chandrayaan-based Registration across Optical Sensors</b><br>Smart India Hackathon 2026 — sponsored by ISRO | Department of Space</p>", unsafe_allow_html=True)
 
 # Sidebar - Pipeline Settings
