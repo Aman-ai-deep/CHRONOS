@@ -1,0 +1,45 @@
+# Virtual Environment
+sih_env/
+venv/
+ENV/
+env/
+chronos/
+
+
+# Python caching
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Operating system files
+Thumbs.db
+db.db
+Desktop.ini
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Local outputs (except .gitkeep to preserve structure)
+outputs/**/*.png
+outputs/**/*.jpg
+outputs/**/*.tif
+outputs/**/*.json
+outputs/**/*.csv
+!outputs/**/.gitkeep
+
+# Large local datasets (except sample data and .gitkeep)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/sample/.gitkeep
