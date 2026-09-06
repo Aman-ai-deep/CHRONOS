@@ -133,11 +133,17 @@ if st.button("🚀 Execute Registration Pipeline"):
     if not use_sample_data:
         if source_file is not None and ref_file is not None:
             temp_dir = tempfile.gettempdir()
-            src_path = os.path.join(temp_dir, source_file.name)
+            
+            # Sanitize filename (replace spaces and special chars with underscores)
+            import re
+            clean_src_name = re.sub(r'[^a-zA-Z0-9._-]', '_', source_file.name)
+            clean_ref_name = re.sub(r'[^a-zA-Z0-9._-]', '_', ref_file.name)
+            
+            src_path = os.path.join(temp_dir, clean_src_name)
             with open(src_path, "wb") as f:
                 f.write(source_file.getbuffer())
             
-            ref_path = os.path.join(temp_dir, ref_file.name)
+            ref_path = os.path.join(temp_dir, clean_ref_name)
             with open(ref_path, "wb") as f:
                 f.write(ref_file.getbuffer())
         else:
@@ -182,8 +188,13 @@ if st.button("🚀 Execute Registration Pipeline"):
                 # SIFT/ORB Fail warning
                 if method in ["sift", "orb"] and metrics['inlier_count'] < 8:
                     st.warning(
-                        "⚠️ VERY LOW INLIER MATCH COUNT. Classical SIFT/ORB struggle heavily under this shadow change. "
+                        "⚠️ VERY LOW INLIER MATCH COUNT. Classical SIFT/ORB struggle heavily under shadow/viewpoint changes. "
                         "Try executing 'LoFTR (Deep Learning)' for dense correspondences!"
+                    )
+                elif metrics['inlier_count'] == 0:
+                    st.warning(
+                        "⚠️ 0 INLIER MATCHES FOUND. The two images may have minimal spatial overlap or low contrast. "
+                        "Try increasing Max Image Dimension in the sidebar or selecting 'LoFTR (Deep Learning)'."
                     )
                 
                 # 3. Render Visualizations
@@ -208,13 +219,15 @@ if st.button("🚀 Execute Registration Pipeline"):
                     st.markdown("**Alignment Overlay Inspection**")
                     overlay_type = st.radio("Overlay View", ["False-Color composite (Red=Warped, Cyan=Reference)", "Alpha Blended (50-50)"], horizontal=True)
                     
+                    # Use ref_preprocessed to guarantee uint8 dtype matching warped array
+                    ref_comp = details["ref_preprocessed"]
+                    
                     if overlay_type.startswith("False-Color"):
-                        composite = create_alignment_composite(details["ref_raw"], warped)
-                        # Convert BGR to RGB for streamlit
+                        composite = create_alignment_composite(ref_comp, warped)
                         composite_rgb = cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
                         st.image(composite_rgb, use_container_width=True, caption="Grayscale features align perfectly. Shadows/lighting differences trigger colored edges.")
                     else:
-                        blend = overlay_images(details["ref_raw"], warped, alpha=0.5)
+                        blend = overlay_images(ref_comp, warped, alpha=0.5)
                         blend_rgb = cv2.cvtColor(blend, cv2.COLOR_BGR2RGB)
                         st.image(blend_rgb, use_container_width=True, caption="50-50 Alpha Blend overlay")
                         

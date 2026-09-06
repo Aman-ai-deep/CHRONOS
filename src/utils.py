@@ -1,10 +1,32 @@
 """
 Utility functions for visualization, logging, and false-color composites.
+Robustly handles any dtype (uint8, uint16, float32) and shape combinations.
 """
 from typing import Tuple
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+
+def ensure_uint8(img: np.ndarray) -> np.ndarray:
+    """Ensures an array is a valid 2D uint8 image in range [0, 255]."""
+    if img is None or img.size == 0:
+        return np.zeros((100, 100), dtype=np.uint8)
+        
+    if img.dtype == np.uint8:
+        out = img
+    else:
+        # Scale to [0, 255] uint8
+        img_float = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        p_low = float(np.percentile(img_float, 1.0)) if img_float.size > 0 else 0.0
+        p_high = float(np.percentile(img_float, 99.0)) if img_float.size > 0 else 255.0
+        if p_high <= p_low:
+            p_high = p_low + 1.0
+        out = np.clip((img_float - p_low) / (p_high - p_low) * 255.0, 0, 255).astype(np.uint8)
+        
+    if len(out.shape) == 3:
+        out = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY) if out.shape[2] == 3 else out[..., 0]
+        
+    return np.ascontiguousarray(out)
 
 def plot_matches(img1: np.ndarray, img2: np.ndarray, pts1: np.ndarray, pts2: np.ndarray, mask: np.ndarray = None) -> plt.Figure:
     """
@@ -13,12 +35,14 @@ def plot_matches(img1: np.ndarray, img2: np.ndarray, pts1: np.ndarray, pts2: np.
     """
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Ensure images are in BGR format for plotting
-    img1_c = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR) if len(img1.shape) == 2 else img1.copy()
-    img2_c = cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR) if len(img2.shape) == 2 else img2.copy()
+    img1_u8 = ensure_uint8(img1)
+    img2_u8 = ensure_uint8(img2)
     
-    h1, w1 = img1.shape[:2]
-    h2, w2 = img2.shape[:2]
+    img1_c = cv2.cvtColor(img1_u8, cv2.COLOR_GRAY2BGR)
+    img2_c = cv2.cvtColor(img2_u8, cv2.COLOR_GRAY2BGR)
+    
+    h1, w1 = img1_u8.shape[:2]
+    h2, w2 = img2_u8.shape[:2]
     
     canvas_h = max(h1, h2)
     canvas_w = w1 + w2
@@ -30,13 +54,13 @@ def plot_matches(img1: np.ndarray, img2: np.ndarray, pts1: np.ndarray, pts2: np.
     ax.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
     ax.axis('off')
     
-    if len(pts1) > 0 and len(pts2) > 0:
+    if pts1 is not None and pts2 is not None and len(pts1) > 0 and len(pts2) > 0:
         for i, (p1, p2) in enumerate(zip(pts1, pts2)):
             x1, y1 = p1
             x2, y2 = p2
             x2_shifted = x2 + w1
             
-            if mask is not None:
+            if mask is not None and i < len(mask):
                 is_inlier = mask[i][0] == 1 if hasattr(mask[i], '__len__') else mask[i] == 1
                 color = 'lime' if is_inlier else 'red'
                 alpha = 0.8 if is_inlier else 0.15
@@ -49,16 +73,19 @@ def plot_matches(img1: np.ndarray, img2: np.ndarray, pts1: np.ndarray, pts2: np.
             ax.plot([x1, x2_shifted], [y1, y2], color=color, alpha=alpha, linewidth=linewidth)
             ax.scatter([x1, x2_shifted], [y1, y2], color=color, s=10, alpha=alpha)
             
-    inliers = int(np.sum(mask)) if mask is not None else len(pts1)
-    total = len(pts1)
+    inliers = int(np.sum(mask)) if mask is not None and len(mask) > 0 else (len(pts1) if pts1 is not None else 0)
+    total = len(pts1) if pts1 is not None else 0
     ax.set_title(f"Feature Correspondences (RANSAC Inliers: {inliers} / {total})")
     plt.tight_layout()
     return fig
 
 def overlay_images(img1: np.ndarray, img2: np.ndarray, alpha: float = 0.5) -> np.ndarray:
     """Overlays source warped image on reference image using alpha blending."""
-    img1_c = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR) if len(img1.shape) == 2 else img1.copy()
-    img2_c = cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR) if len(img2.shape) == 2 else img2.copy()
+    img1_u8 = ensure_uint8(img1)
+    img2_u8 = ensure_uint8(img2)
+    
+    img1_c = cv2.cvtColor(img1_u8, cv2.COLOR_GRAY2BGR)
+    img2_c = cv2.cvtColor(img2_u8, cv2.COLOR_GRAY2BGR)
     
     # Resize if not matching
     if img1_c.shape != img2_c.shape:
@@ -71,19 +98,16 @@ def create_alignment_composite(ref: np.ndarray, warped: np.ndarray) -> np.ndarra
     Creates a false-color alignment composite to show registration quality.
     Red channel = Warped Source Image
     Green & Blue channels = Reference Image
-    
-    In areas of perfect alignment, the image looks grayscale (black & white).
-    In areas of misalignments/shadow differences, bright red or cyan fringes are visible.
     """
-    ref_gray = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY) if len(ref.shape) == 3 else ref.copy()
-    warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY) if len(warped.shape) == 3 else warped.copy()
+    ref_u8 = ensure_uint8(ref)
+    warped_u8 = ensure_uint8(warped)
     
-    if ref_gray.shape != warped_gray.shape:
-        warped_gray = cv2.resize(warped_gray, (ref_gray.shape[1], ref_gray.shape[0]))
+    if ref_u8.shape != warped_u8.shape:
+        warped_u8 = cv2.resize(warped_u8, (ref_u8.shape[1], ref_u8.shape[0]))
         
-    composite = np.zeros((ref_gray.shape[0], ref_gray.shape[1], 3), dtype=np.uint8)
-    composite[..., 0] = warped_gray  # Red = Warped
-    composite[..., 1] = ref_gray     # Green = Reference
-    composite[..., 2] = ref_gray     # Blue = Reference
+    composite = np.zeros((ref_u8.shape[0], ref_u8.shape[1], 3), dtype=np.uint8)
+    composite[..., 0] = warped_u8  # Red = Warped
+    composite[..., 1] = ref_u8     # Green = Reference
+    composite[..., 2] = ref_u8     # Blue = Reference
     
     return composite
