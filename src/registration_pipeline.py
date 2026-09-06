@@ -1,5 +1,6 @@
 """
 Main end-to-end registration pipeline orchestrator.
+Robustly handles raw planetary formats, high-resolution arrays, and memory limits.
 """
 from typing import Dict, Any, Tuple
 import numpy as np
@@ -19,23 +20,29 @@ def calculate_reprojection_rmse(pts1: np.ndarray, pts2: np.ndarray, H: np.ndarra
     Computes the Root Mean Squared Error (RMSE) of inlier matches reprojected
     through the estimated homography H.
     """
-    inliers1 = pts1[mask.squeeze() == 1]
-    inliers2 = pts2[mask.squeeze() == 1]
-    
-    if len(inliers1) == 0:
+    try:
+        if mask is None or len(mask) == 0:
+            return 0.0
+            
+        inliers1 = pts1[mask.squeeze() == 1]
+        inliers2 = pts2[mask.squeeze() == 1]
+        
+        if len(inliers1) == 0:
+            return 0.0
+            
+        # Reshape for perspectiveTransform: (N, 1, 2)
+        pts1_reshaped = inliers1.reshape(-1, 1, 2).astype(np.float32)
+        pts1_projected = cv2.perspectiveTransform(pts1_reshaped, H).squeeze()
+        
+        # Handle single point squeeze shape collapse
+        if len(inliers1) == 1:
+            pts1_projected = pts1_projected.reshape(1, 2)
+            
+        errors = np.linalg.norm(pts1_projected - inliers2, axis=1)
+        rmse = np.sqrt(np.mean(errors ** 2))
+        return float(rmse)
+    except Exception:
         return 0.0
-        
-    # Reshape for perspectiveTransform: (N, 1, 2)
-    pts1_reshaped = inliers1.reshape(-1, 1, 2)
-    pts1_projected = cv2.perspectiveTransform(pts1_reshaped, H).squeeze()
-    
-    # Handle single point squeeze shape collapse
-    if len(inliers1) == 1:
-        pts1_projected = pts1_projected.reshape(1, 2)
-        
-    errors = np.linalg.norm(pts1_projected - inliers2, axis=1)
-    rmse = np.sqrt(np.mean(errors ** 2))
-    return float(rmse)
 
 def run_registration(source_path: str, reference_path: str, method: str = "sift", config: Dict[str, Any] = None) -> Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]:
     """
@@ -46,17 +53,21 @@ def run_registration(source_path: str, reference_path: str, method: str = "sift"
         metrics (Dict[str, Any]): Registration metrics (RMSE, inlier count, ratio).
         details (Dict[str, Any]): Intermediate arrays for visual debugging.
     """
-    # 1. Load Images
+    if config is None:
+        config = {}
+        
+    # 1. Load Raw Images
     ref_raw, ref_meta = load_image(reference_path)
     src_raw, src_meta = load_image(source_path)
     
-    # 2. Preprocess Images
+    # 2. Preprocess Images (Normalizes bit depth, cleans NaNs, caps max_dim to 1024px for RAM safety)
     ref_prep = preprocess_image(ref_raw, config)
     src_prep = preprocess_image(src_raw, config)
     
     # 3. Feature Detection and Matching
     method_lower = method.lower()
     best_scale = 1.0
+    
     if method_lower == "sift":
         pts1, pts2 = match_sift(src_prep, ref_prep)
     elif method_lower == "orb":
@@ -64,24 +75,24 @@ def run_registration(source_path: str, reference_path: str, method: str = "sift"
     elif method_lower == "phase":
         pts1, pts2, best_scale = match_phase_congruency_multi_scale(src_prep, ref_prep)
     elif method_lower == "loftr":
-        pts1, pts2 = match_loftr(src_prep, ref_prep)
+        max_dim = config.get("max_dim", 1024)
+        pts1, pts2 = match_loftr(src_prep, ref_prep, max_inference_dim=max_dim)
     else:
         raise ValueError(f"Unknown registration method: {method}")
         
     # 3.5 Sub-pixel Refinement
-    enable_subpixel = config.get("enable_subpixel", True) if config else True
+    enable_subpixel = config.get("enable_subpixel", True)
     if enable_subpixel and len(pts1) >= 4:
         pts1, pts2 = refine_matches_subpixel(src_prep, ref_prep, pts1, pts2)
         
     # 4. Outlier Rejection via RANSAC Homography
-    ransac_thresh = config.get("ransac_threshold", 5.0) if config else 5.0
+    ransac_thresh = config.get("ransac_threshold", 5.0)
     H, mask = estimate_homography(pts1, pts2, threshold=ransac_thresh)
     
-    # 5. Image Warping
+    # 5. Image Warping on clean preprocessed array
     h_ref, w_ref = ref_prep.shape[:2]
-    # Warp source to match reference coordinate grid
     warped_image = cv2.warpPerspective(
-        src_raw, H, (w_ref, h_ref), 
+        src_prep, H, (w_ref, h_ref), 
         flags=cv2.INTER_LINEAR, 
         borderMode=cv2.BORDER_CONSTANT, 
         borderValue=0

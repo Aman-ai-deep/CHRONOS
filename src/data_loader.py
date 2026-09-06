@@ -1,24 +1,67 @@
 """
 Data loading module for lunar images (PDS formats and standard formats).
+Safely handles 16-bit, 32-bit float, 4-channel RGBA, multi-band TIFF, and PDS formats.
 """
 import os
 from typing import Tuple, Dict, Any
 import numpy as np
+import cv2
+
+try:
+    import pdr
+except ImportError:
+    pdr = None
+
+try:
+    import rasterio
+except ImportError:
+    rasterio = None
+
+def sanitize_loaded_array(arr: np.ndarray) -> np.ndarray:
+    """
+    Cleans NaNs, Infs, and reduces 3D/4D arrays to a contiguous 2D grayscale array.
+    """
+    if arr is None or arr.size == 0:
+        return np.zeros((100, 100), dtype=np.float32)
+        
+    # Replace NaNs/Infs
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Squeeze single dimensions
+    arr = np.squeeze(arr)
+    
+    # Handle multi-channel or multi-band arrays
+    if len(arr.shape) == 3:
+        # If 3-channel (BGR/RGB) or 4-channel (BGRA/RGBA)
+        channels = arr.shape[2] if arr.shape[2] in [3, 4] else arr.shape[0]
+        if arr.shape[2] == 4:
+            arr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_BGRA2GRAY)
+        elif arr.shape[2] == 3:
+            arr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_BGR2GRAY)
+        elif arr.shape[0] in [3, 4]: # shape (C, H, W)
+            arr = arr[0, ...] # Select first band
+        else:
+            arr = arr[..., 0] # Select first band
+            
+    return np.ascontiguousarray(arr)
 
 def load_pds_image(path: str) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Loads a PDS image (.img/.lbl) using PlanetaryDataReader (pdr)."""
+    """Loads a PDS image (.img/.lbl) using PlanetaryDataReader (pdr) with fallback."""
+    metadata = {"format": "PDS", "path": path}
+    
+    if pdr is None:
+        print(f"[ WARNING ] pdr library not installed. Falling back to standard loader for {path}.")
+        return load_standard_image(path)
+        
     try:
-        import pdr
         dataset = pdr.read(path)
         
-        # Attempt to read metadata from the label
-        metadata = {}
+        # Read metadata
         if hasattr(dataset, 'metadata') and dataset.metadata is not None:
-            metadata = dict(dataset.metadata)
+            metadata.update(dict(dataset.metadata))
         elif hasattr(dataset, 'label') and dataset.label is not None:
-            metadata = dict(dataset.label)
+            metadata.update(dict(dataset.label))
         
-        # Check for image data in common dictionary keys
         image_data = None
         if hasattr(dataset, 'keys'):
             keys = list(dataset.keys())
@@ -27,76 +70,64 @@ def load_pds_image(path: str) -> Tuple[np.ndarray, Dict[str, Any]]:
                     image_data = dataset[key]
                     break
                     
-        # Check attributes if dictionary lookup failed
-        if image_data is None:
-            for attr in ['IMAGE', 'image', 'IMAGE_DATA', 'data']:
-                if hasattr(dataset, attr):
-                    val = getattr(dataset, attr)
-                    if isinstance(val, np.ndarray):
-                        image_data = val
-                        break
-                        
-        # Last resort: search values for numpy arrays
         if image_data is None and hasattr(dataset, 'values'):
             for val in dataset.values():
                 if isinstance(val, np.ndarray):
                     image_data = val
                     break
                     
-        if image_data is None:
-            raise ValueError(f"Could not find image array in PDS dataset loaded from {path}")
+        if image_data is not None:
+            sanitized = sanitize_loaded_array(image_data)
+            return sanitized, metadata
             
-        # Ensure it is a 2D grayscale array
-        if len(image_data.shape) > 2:
-            # If multi-band (e.g., hyperspectral or color), select the first band
-            image_data = image_data[..., 0]
-            
-        metadata["format"] = "PDS"
-        metadata["path"] = path
-        return image_data, metadata
     except Exception as e:
-        raise RuntimeError(f"Error reading PDS file {path} via pdr: {e}")
+        print(f"[ WARNING ] pdr read failed for {path}: {e}. Falling back to standard image loader.")
+        
+    # Fallback to standard reader if pdr fails or missing label
+    return load_standard_image(path)
 
 def load_standard_image(path: str) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Loads standard images (.tif, .png, .jpg) using rasterio or opencv."""
+    """Loads standard images (.tif, .png, .jpg, .img) using rasterio or opencv."""
     metadata = {"format": "Standard", "path": path}
     
-    # Try rasterio first (geospatial tiff/png)
-    try:
-        import rasterio
-        with rasterio.open(path) as src:
-            image_data = src.read(1)  # Read first band
-            metadata.update({
-                "width": src.width,
-                "height": src.height,
-                "crs": str(src.crs),
-                "transform": list(src.transform) if src.transform else None,
-                "bounds": list(src.bounds) if src.bounds else None,
-                "count": src.count
-            })
-            return image_data, metadata
-    except ImportError:
-        pass
-    except Exception:
-        # Fall back to opencv if rasterio fails
-        pass
+    # 1. Try rasterio first (geospatial tiff/png)
+    if rasterio is not None:
+        try:
+            with rasterio.open(path) as src:
+                image_data = src.read(1)  # Read first band
+                metadata.update({
+                    "width": src.width,
+                    "height": src.height,
+                    "crs": str(src.crs),
+                    "transform": list(src.transform) if src.transform else None,
+                    "bounds": list(src.bounds) if src.bounds else None,
+                    "count": src.count
+                })
+                sanitized = sanitize_loaded_array(image_data)
+                return sanitized, metadata
+        except Exception:
+            pass
 
-    # OpenCV fallback
-    import cv2
+    # 2. OpenCV fallback
     image_data = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if image_data is None:
-        raise FileNotFoundError(f"Could not load image at {path} via OpenCV or Rasterio.")
+        # Try reading raw bytes via numpy if opencv returns None
+        try:
+            arr = np.fromfile(path, dtype=np.uint8)
+            image_data = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        except Exception:
+            pass
+            
+    if image_data is None:
+        raise FileNotFoundError(f"Could not load image file at {path}. Format may be unreadable or corrupt.")
         
-    if len(image_data.shape) == 3:
-        # RGB/BGR to Gray
-        image_data = cv2.cvtColor(image_data, cv2.COLOR_BGR2GRAY)
-        
+    sanitized = sanitize_loaded_array(image_data)
     metadata.update({
-        "width": image_data.shape[1],
-        "height": image_data.shape[0],
-        "dtype": str(image_data.dtype)
+        "width": sanitized.shape[1],
+        "height": sanitized.shape[0],
+        "dtype": str(sanitized.dtype)
     })
-    return image_data, metadata
+    return sanitized, metadata
 
 def load_image(path: str) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Unified entry point to load any lunar image."""

@@ -77,6 +77,7 @@ with st.sidebar.expander("✨ Preprocessing Settings", expanded=False):
     grid_size_val = st.slider("CLAHE Grid Size (NxN)", 4, 16, 8, 2)
     clahe_grid_size = (grid_size_val, grid_size_val)
     scale_factor = st.slider("Downscale Image (compute speed)", 0.25, 1.0, 1.0, 0.25)
+    max_dim_val = st.slider("Max Image Dimension (RAM Safety)", 256, 2048, 1024, 128, help="Caps image dimensions automatically to prevent server RAM Out-Of-Memory crashes on Streamlit Cloud.")
 
 with st.sidebar.expander("🎯 Matcher & RANSAC Settings", expanded=False):
     enable_subpixel = st.checkbox("Sub-pixel Refinement (cornerSubPix)", value=True)
@@ -97,7 +98,9 @@ ref_file = None
 with col1:
     st.subheader("📸 Source (Moving) Image")
     if not use_sample_data:
-        source_file = st.file_uploader("Upload Chandrayaan-2 (OHRC/TMC/IIRS) Image", type=["png", "jpg", "tif", "img"])
+        source_file = st.file_uploader("Upload Chandrayaan-2 (OHRC/TMC/IIRS) Image", type=["png", "jpg", "jpeg", "tif", "tiff", "img", "lbl"])
+        if source_file is not None:
+            st.info(f"File uploaded: `{source_file.name}` ({source_file.size / 1024:.1f} KB)")
     else:
         st.write("Using default synthetic source: `data/sample/source.png` (Sun azimuth: 225°)")
         if os.path.exists("data/sample/source.png"):
@@ -108,7 +111,9 @@ with col1:
 with col2:
     st.subheader("🗺️ Reference (Fixed) Image")
     if not use_sample_data:
-        ref_file = st.file_uploader("Upload Lunar Reference Image (LRO NAC)", type=["png", "jpg", "tif", "img"])
+        ref_file = st.file_uploader("Upload Lunar Reference Image (LRO NAC)", type=["png", "jpg", "jpeg", "tif", "tiff", "img", "lbl"])
+        if ref_file is not None:
+            st.info(f"File uploaded: `{ref_file.name}` ({ref_file.size / 1024:.1f} KB)")
     else:
         st.write("Using default synthetic reference: `data/sample/reference.png` (Sun azimuth: 45°)")
         if os.path.exists("data/sample/reference.png"):
@@ -127,13 +132,11 @@ if st.button("🚀 Execute Registration Pipeline"):
     # Save uploaded files temporarily to read paths
     if not use_sample_data:
         if source_file is not None and ref_file is not None:
-            # Temp source
             temp_dir = tempfile.gettempdir()
             src_path = os.path.join(temp_dir, source_file.name)
             with open(src_path, "wb") as f:
                 f.write(source_file.getbuffer())
             
-            # Temp reference
             ref_path = os.path.join(temp_dir, ref_file.name)
             with open(ref_path, "wb") as f:
                 f.write(ref_file.getbuffer())
@@ -150,6 +153,7 @@ if st.button("🚀 Execute Registration Pipeline"):
             "clahe_clip_limit": clahe_clip_limit,
             "clahe_grid_size": clahe_grid_size,
             "scale_factor": scale_factor,
+            "max_dim": max_dim_val,
             "ransac_threshold": ransac_threshold,
             "enable_subpixel": enable_subpixel
         }
