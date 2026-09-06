@@ -36,10 +36,12 @@ This document analyzes the root causes of crashes when uploading custom images (
 
 ---
 
-### Cause D: High-Resolution Memory (OOM) SIGKILL on Streamlit Cloud
-* **Symptom:** Streamlit app suddenly reloads or displays "App crashed" / "Process killed".
-* **Root Cause:** Streamlit Cloud limits RAM to ~1 GB–2 GB. High-resolution raw photos (e.g. 4000x4000) passed into deep learning matchers (LoFTR) require tens of gigabytes of RAM for attention grids on CPU, triggering the Linux kernel's Out-Of-Memory (OOM) process killer.
-* **Fix:** Added automatic dimension scaling (`max_dim` slider in sidebar, default 1,024 px). High-resolution inputs are downscaled safely for feature matching, keeping memory usage < 100 MB.
+### Cause E: Single-Inlier Array Shape Collapse (NumPy 0D Scalar Indexing)
+* **Symptom:** `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'numpy.ndarray'` when RANSAC produces exactly 1 inlier match.
+* **Root Cause:** When RANSAC produces 1 inlier (`mask` shape `(1, 1)`), calling `mask.squeeze()` collapses the array into a 0D scalar boolean `array(True)`. 
+  * Indexing `pts2[array(True)]` prepends an axis, turning `(1, 2)` into `(1, 1, 2)`.
+  * Later, in `calculate_uniformity()`, iterating `for pt in pts` returns a 1D array `pt = [x, y]` instead of numbers, causing `int(x)` to fail with a `TypeError` and crash Python.
+* **Fix:** Replaced `.squeeze()` with `.reshape(-1)` in `src/evaluate.py` and `src/registration_pipeline.py`. `mask.reshape(-1)` always yields a clean 1D boolean array `(1,)`, keeping point array dimensions strictly `(1, 2)`.
 
 ---
 
@@ -50,4 +52,6 @@ This document analyzes the root causes of crashes when uploading custom images (
 | **WhatsApp JPEGs** | Type mismatch (`uint8` vs `float/int`), spaces in filename | Sanitized filenames, passed `ref_preprocessed` to overlays |
 | **16-bit GeoTIFFs** | Dtype conflict (`uint16` vs `uint8`) | `sanitize_loaded_array` + `normalize_bit_depth` uint8 casting |
 | **PDS `.img`/`.lbl`** | Missing label fallback crash | `pdr` fallback to standard OpenCV/Numpy binary reader |
+| **Single Inlier Match** | NumPy 0D scalar boolean collapse | Replaced `.squeeze()` with `.reshape(-1)` across evaluation modules |
 | **Low-texture / 0 matches** | Array index crash | Zero-match check in `plot_matches` and `estimate_homography` |
+

@@ -21,23 +21,22 @@ def calculate_reprojection_rmse(pts1: np.ndarray, pts2: np.ndarray, H: np.ndarra
     through the estimated homography H.
     """
     try:
-        if mask is None or len(mask) == 0:
+        if mask is None or len(mask) == 0 or pts1 is None or pts2 is None:
             return 0.0
             
-        inliers1 = pts1[mask.squeeze() == 1]
-        inliers2 = pts2[mask.squeeze() == 1]
+        inlier_mask = mask.reshape(-1) == 1
+        inliers1 = pts1[inlier_mask]
+        inliers2 = pts2[inlier_mask]
         
         if len(inliers1) == 0:
             return 0.0
             
-        # Reshape for perspectiveTransform: (N, 1, 2)
-        pts1_reshaped = inliers1.reshape(-1, 1, 2).astype(np.float32)
-        pts1_projected = cv2.perspectiveTransform(pts1_reshaped, H).squeeze()
+        inliers1 = np.asarray(inliers1).reshape(-1, 2)
+        inliers2 = np.asarray(inliers2).reshape(-1, 2)
         
-        # Handle single point squeeze shape collapse
-        if len(inliers1) == 1:
-            pts1_projected = pts1_projected.reshape(1, 2)
-            
+        pts1_reshaped = inliers1.reshape(-1, 1, 2).astype(np.float32)
+        pts1_projected = cv2.perspectiveTransform(pts1_reshaped, H).reshape(-1, 2)
+        
         errors = np.linalg.norm(pts1_projected - inliers2, axis=1)
         rmse = np.sqrt(np.mean(errors ** 2))
         return float(rmse)
