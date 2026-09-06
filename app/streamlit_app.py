@@ -4,10 +4,18 @@ Provides a premium visual interface for aligning Chandrayaan-2 and LRO NAC image
 """
 import sys
 import os
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
+# Ensure project root is first in sys.path so 'src' package imports reliably
+file_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(file_dir)
+
+if project_root in sys.path:
+    sys.path.remove(project_root)
+sys.path.insert(0, project_root)
+
+src_dir = os.path.join(project_root, "src")
+if src_dir not in sys.path:
+    sys.path.append(src_dir)
 
 import json
 import tempfile
@@ -16,8 +24,13 @@ import cv2
 import matplotlib.pyplot as plt
 import streamlit as st
 
-from src.registration_pipeline import run_registration
-from src.utils import plot_matches, overlay_images, create_alignment_composite
+try:
+    from src.registration_pipeline import run_registration
+    from src.utils import plot_matches, overlay_images, create_alignment_composite
+except ImportError:
+    from registration_pipeline import run_registration
+    from utils import plot_matches, overlay_images, create_alignment_composite
+
 
 # Page Configurations
 st.set_page_config(

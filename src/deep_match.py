@@ -97,6 +97,8 @@ def match_loftr(img1: np.ndarray, img2: np.ndarray, max_inference_dim: int = 102
         return pts0_orig, pts1_orig
         
     except Exception as e:
-        print(f"[ WARNING ] LoFTR inference failed/OOM: {e}. Falling back to SIFT matcher.")
-        from src.classical_match import match_sift
+        try:
+            from src.classical_match import match_sift
+        except ImportError:
+            from classical_match import match_sift
         return match_sift(img1, img2)

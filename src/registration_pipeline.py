@@ -6,14 +6,25 @@ from typing import Dict, Any, Tuple
 import numpy as np
 import cv2
 
-from src.data_loader import load_image
-from src.preprocessing import preprocess_image
-from src.classical_match import match_sift, match_orb
-from src.outlier_rejection import estimate_homography
-from src.illum_invariant import match_phase_congruency_multi_scale
-from src.deep_match import match_loftr
-from src.subpixel_refine import refine_matches_subpixel
-from src.evaluate import evaluate_registration
+try:
+    from src.data_loader import load_image
+    from src.preprocessing import preprocess_image
+    from src.classical_match import match_sift, match_orb
+    from src.outlier_rejection import estimate_homography
+    from src.illum_invariant import match_phase_congruency_multi_scale
+    from src.deep_match import match_loftr
+    from src.subpixel_refine import refine_matches_subpixel
+    from src.evaluate import evaluate_registration
+except ImportError:
+    from data_loader import load_image
+    from preprocessing import preprocess_image
+    from classical_match import match_sift, match_orb
+    from outlier_rejection import estimate_homography
+    from illum_invariant import match_phase_congruency_multi_scale
+    from deep_match import match_loftr
+    from subpixel_refine import refine_matches_subpixel
+    from evaluate import evaluate_registration
+
 
 def calculate_reprojection_rmse(pts1: np.ndarray, pts2: np.ndarray, H: np.ndarray, mask: np.ndarray) -> float:
     """

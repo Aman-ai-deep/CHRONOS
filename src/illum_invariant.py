@@ -5,8 +5,13 @@ from typing import Tuple, List
 import numpy as np
 import cv2
 
-from src.classical_match import match_sift
-from src.outlier_rejection import estimate_homography
+try:
+    from src.classical_match import match_sift
+    from src.outlier_rejection import estimate_homography
+except ImportError:
+    from classical_match import match_sift
+    from outlier_rejection import estimate_homography
+
 
 def compute_phase_congruency(image: np.ndarray) -> np.ndarray:
     """
